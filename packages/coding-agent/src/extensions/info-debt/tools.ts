@@ -2,7 +2,7 @@
  * Information Debt tools.
  *
  * Six independent tools registered via pi.registerTool(). Each tool reads and
- * writes the SQLite debt store directly; tool results returned to the LLM are
+ * writes the MySQL debt store through DebtRepository; tool results returned to the LLM are
  * deliberately compact so the session trajectory never becomes the state
  * store — the model can always re-query the DB for current truth.
  */
@@ -11,7 +11,7 @@ import { StringEnum } from "@earendil-works/pi-ai";
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import type { ExtensionAPI } from "../../core/extensions/types.ts";
-import { getDebt, insertDebt, listDebts, listDebtsByIdPrefix, resolveDebt, searchDebts, updateDebt } from "./db.ts";
+import { type DebtRepository, getDebtRepository } from "./db.ts";
 import { DEBT_STATUSES, DEBT_TYPES, type DebtItem, type DebtStatus } from "./types.ts";
 
 /** Accepts an ISO 8601 string or epoch milliseconds. Returns epoch ms. */
@@ -82,7 +82,7 @@ function textResult(text: string, details: DebtToolDetails) {
 	return { content: [{ type: "text" as const, text }], details };
 }
 
-export function registerDebtTools(pi: ExtensionAPI): void {
+export function registerDebtTools(pi: ExtensionAPI, repository: DebtRepository = getDebtRepository()): void {
 	pi.registerTool({
 		name: "capture_debt",
 		label: "Capture Debt",
@@ -132,7 +132,7 @@ export function registerDebtTools(pi: ExtensionAPI): void {
 				createdAt: now,
 				updatedAt: now,
 			};
-			insertDebt(item);
+			await repository.create(item);
 			return textResult(`Captured debt ${shortId(item.id)}: ${item.title} (status: inbox)`, {
 				tool: "capture_debt",
 				id: item.id,
@@ -163,7 +163,7 @@ export function registerDebtTools(pi: ExtensionAPI): void {
 			limit: Type.Optional(Type.Number({ description: "Max items to return, default 30" })),
 		}),
 		async execute(_toolCallId, params) {
-			const items = listDebts({
+			const items = await repository.list({
 				status: params.status,
 				debtType: params.debtType,
 				project: params.project,
@@ -192,7 +192,7 @@ export function registerDebtTools(pi: ExtensionAPI): void {
 			id: Type.String({ description: "Debt item id (full or 8-char short form)" }),
 		}),
 		async execute(_toolCallId, params) {
-			const item = findDebtById(params.id);
+			const item = await findDebtById(repository, params.id);
 			return textResult(formatFullItem(item), {
 				tool: "get_debt",
 				id: item.id,
@@ -220,7 +220,7 @@ export function registerDebtTools(pi: ExtensionAPI): void {
 			limit: Type.Optional(Type.Number({ description: "Max items to return, default 30" })),
 		}),
 		async execute(_toolCallId, params) {
-			const items = searchDebts(params.query, {
+			const items = await repository.search(params.query, {
 				status: params.status,
 				debtType: params.debtType,
 				project: params.project,
@@ -262,8 +262,8 @@ export function registerDebtTools(pi: ExtensionAPI): void {
 			revisitAt: Type.Optional(TimestampSchema),
 		}),
 		async execute(_toolCallId, params) {
-			const item = findDebtById(params.id);
-			const updated = updateDebt(item.id, {
+			const item = await findDebtById(repository, params.id);
+			const updated = await repository.update(item.id, {
 				title: params.title,
 				debtType: params.debtType,
 				status: params.status,
@@ -315,8 +315,8 @@ export function registerDebtTools(pi: ExtensionAPI): void {
 			note: Type.Optional(Type.String({ description: "How it was resolved" })),
 		}),
 		async execute(_toolCallId, params) {
-			const item = findDebtById(params.id);
-			const resolved = resolveDebt(item.id, params.note);
+			const item = await findDebtById(repository, params.id);
+			const resolved = await repository.resolve(item.id, params.note);
 			if (!resolved) {
 				throw new Error(`Debt item ${params.id} disappeared during resolve`);
 			}
@@ -337,13 +337,13 @@ export function registerDebtTools(pi: ExtensionAPI): void {
 }
 
 /** Resolve full or 8-char short ids; throws a descriptive error when not found. */
-function findDebtById(id: string): DebtItem {
-	const exact = getDebt(id);
+async function findDebtById(repository: DebtRepository, id: string): Promise<DebtItem> {
+	const exact = await repository.get(id);
 	if (exact) return exact;
 	if (id.length < 8) {
 		throw new Error(`Debt id too short; use the full id or the 8-char short form: ${id}`);
 	}
-	const candidates = listDebtsByIdPrefix(id);
+	const candidates = await repository.listByIdPrefix(id);
 	if (candidates.length === 1) return candidates[0];
 	if (candidates.length === 0) throw new Error(`No debt item found with id ${id}`);
 	throw new Error(`Ambiguous debt id ${id}: matches ${candidates.length} items`);

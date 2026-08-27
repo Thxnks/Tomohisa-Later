@@ -1,7 +1,7 @@
 /**
  * Information Debt built-in data model.
  *
- * DebtItem is the TypeScript-facing shape (camelCase); DebtRow is the SQLite
+ * DebtItem is the TypeScript-facing shape (camelCase); DebtRow is the MySQL
  * row shape (snake_case). The only place the two spellings may diverge is the
  * rowToItem() mapping in this file.
  */
@@ -43,7 +43,7 @@ export interface DebtItem {
 	resolutionNote?: string;
 }
 
-/** SQLite row shape. Columns are snake_case; DebtItem fields are camelCase. */
+/** MySQL row shape. Columns are snake_case; DebtItem fields are camelCase. */
 export interface DebtRow {
 	id: string;
 	title: string;
