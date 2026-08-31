@@ -49,6 +49,24 @@ These optional variables override the built-in defaults:
 The extension creates and migrates its `debt_meta` and `debt_items` tables on
 first use.
 
+## Local HTTP API and browser capture
+
+Start the local browser-capture API from the repository root:
+
+```powershell
+npm run info-debt-api
+```
+
+It listens only on `http://127.0.0.1:43127` by default. Set
+`PI_INFO_DEBT_HTTP_PORT` to use another local port. The API exposes:
+
+- `GET /health`
+- `POST /v1/debts` with JSON fields `url`, `title`, and `why_saved`
+
+Browser captures are stored as `web` / `discovery` debt in `inbox` with
+priority 3. Install the unpacked Chromium/Edge extension from
+`apps/info-debt-browser-extension`; its README contains setup instructions.
+
 ## Tools
 
 | Tool | Purpose |
@@ -148,6 +166,7 @@ time is no more than about 30 minutes. `/review abc` should show usage help.
 
 ## Out of scope (deliberately)
 
-Source Resolver, trajectory reduction, platform sync, vector search, knowledge
-graphs, a separate Review LLM, automatic status changes, and front-end apps.
+Source Resolver, page-content extraction, OCR, Vision, XHS crawling,
+trajectory reduction, platform sync, vector search, knowledge graphs, a
+separate Review LLM, automatic status changes, and recommendation logic.
 Search is plain SQL `LIKE` for now.

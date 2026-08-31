@@ -2,7 +2,7 @@
  * Information Debt tools.
  *
  * Six independent tools registered via pi.registerTool(). Each tool reads and
- * writes the MySQL debt store through DebtRepository; tool results returned to the LLM are
+ * writes the MySQL debt store through DebtService; tool results returned to the LLM are
  * deliberately compact so the session trajectory never becomes the state
  * store — the model can always re-query the DB for current truth.
  */
@@ -12,6 +12,7 @@ import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import type { ExtensionAPI } from "../../core/extensions/types.ts";
 import { type DebtRepository, getDebtRepository } from "./db.ts";
+import { DebtService } from "./service.ts";
 import { DEBT_STATUSES, DEBT_TYPES, type DebtItem, type DebtStatus } from "./types.ts";
 
 /** Accepts an ISO 8601 string or epoch milliseconds. Returns epoch ms. */
@@ -83,6 +84,7 @@ function textResult(text: string, details: DebtToolDetails) {
 }
 
 export function registerDebtTools(pi: ExtensionAPI, repository: DebtRepository = getDebtRepository()): void {
+	const service = new DebtService(repository);
 	pi.registerTool({
 		name: "capture_debt",
 		label: "Capture Debt",
@@ -112,9 +114,7 @@ export function registerDebtTools(pi: ExtensionAPI, repository: DebtRepository =
 			revisitAt: Type.Optional(TimestampSchema),
 		}),
 		async execute(_toolCallId, params) {
-			const now = Date.now();
-			const item: DebtItem = {
-				id: crypto.randomUUID(),
+			const item = await service.capture({
 				title: params.title,
 				sourceType: params.sourceType ?? "manual",
 				sourceUrl: params.sourceUrl,
@@ -124,15 +124,11 @@ export function registerDebtTools(pi: ExtensionAPI, repository: DebtRepository =
 				whySaved: params.whySaved,
 				project: params.project,
 				nextAction: params.nextAction,
-				status: "inbox",
 				priority: params.priority ?? 3,
 				estimatedMinutes: params.estimatedMinutes,
 				dueAt: params.dueAt ? parseTimestamp(params.dueAt, "dueAt") : undefined,
 				revisitAt: params.revisitAt ? parseTimestamp(params.revisitAt, "revisitAt") : undefined,
-				createdAt: now,
-				updatedAt: now,
-			};
-			await repository.create(item);
+			});
 			return textResult(`Captured debt ${shortId(item.id)}: ${item.title} (status: inbox)`, {
 				tool: "capture_debt",
 				id: item.id,

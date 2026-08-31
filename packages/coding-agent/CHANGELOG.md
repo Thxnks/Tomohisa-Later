@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added a loopback-only Information Debt HTTP capture API and a Chromium/Edge extension for saving the current page URL, title, and why-saved note.
+
 ## [0.84.3] - 2026-08-24
 
 ### New Features

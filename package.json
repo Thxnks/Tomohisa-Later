@@ -13,6 +13,7 @@
 	],
 	"scripts": {
 		"pi": "node --env-file-if-exists=.env node_modules/tsx/dist/cli.mjs --tsconfig tsconfig.json packages/coding-agent/src/cli.ts",
+		"info-debt-api": "node --env-file-if-exists=.env node_modules/tsx/dist/cli.mjs --tsconfig tsconfig.json packages/coding-agent/src/extensions/info-debt/http/cli.ts",
 		"clean": "npm run clean --workspaces",
 		"build": "cd packages/tui && npm run build && cd ../telemetry && npm run build && cd ../ai && npm run build && cd ../agent && npm run build && cd ../session-backends/sqlite-node && npm run build && cd ../../protocol && npm run build && cd ../client && npm run build && cd ../server && npm run build && cd ../coding-agent && npm run build",
 		"build:offline": "cd packages/tui && npm run build && cd ../telemetry && npm run build && cd ../ai && npm run build:offline && cd ../agent && npm run build && cd ../session-backends/sqlite-node && npm run build && cd ../../protocol && npm run build && cd ../client && npm run build && cd ../server && npm run build && cd ../coding-agent && npm run build",
