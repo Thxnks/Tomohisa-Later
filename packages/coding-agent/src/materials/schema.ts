@@ -1,5 +1,5 @@
 /** Independent schema versioning: the existing debt tables remain intact. */
-export const MATERIAL_SCHEMA_VERSION = 1;
+export const MATERIAL_SCHEMA_VERSION = 3;
 export const MATERIAL_SCHEMA = [
 	`CREATE TABLE IF NOT EXISTS material_meta (
 		\`key\` VARCHAR(191) PRIMARY KEY, \`value\` VARCHAR(191) NOT NULL
@@ -41,5 +41,22 @@ export const MATERIAL_SCHEMA = [
 		PRIMARY KEY (debt_id, material_id),
 		FOREIGN KEY (debt_id) REFERENCES debt_items(id),
 		FOREIGN KEY (material_id) REFERENCES materials(id)
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+	`CREATE TABLE IF NOT EXISTS material_collections (
+		id VARCHAR(36) PRIMARY KEY, material_id VARCHAR(36) NOT NULL,
+		platform VARCHAR(32) NOT NULL, status VARCHAR(32) NOT NULL,
+		result_json LONGTEXT, created_at BIGINT NOT NULL, finished_at BIGINT,
+		INDEX idx_collection_material (material_id, created_at, id),
+		FOREIGN KEY (material_id) REFERENCES materials(id)
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+	`CREATE TABLE IF NOT EXISTS material_image_texts (
+		id VARCHAR(36) PRIMARY KEY, material_id VARCHAR(36) NOT NULL,
+		asset_id VARCHAR(36) NOT NULL, content LONGTEXT NOT NULL,
+		content_hash CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+		extractor VARCHAR(191) NOT NULL, created_at BIGINT NOT NULL,
+		UNIQUE KEY uq_image_text (asset_id, content_hash, extractor),
+		INDEX idx_image_text_material (material_id, asset_id, created_at, id),
+		FOREIGN KEY (material_id) REFERENCES materials(id),
+		FOREIGN KEY (asset_id) REFERENCES material_assets(id)
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
 ];

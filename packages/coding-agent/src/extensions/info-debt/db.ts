@@ -343,8 +343,9 @@ export class MySqlDebtRepository implements DebtRepository {
 }
 
 let defaultRepository: MySqlDebtRepository | undefined;
+let repositoryOwners = 0;
 
-export function getDebtRepository(): DebtRepository {
+export function getDebtRepository(): MySqlDebtRepository {
 	defaultRepository ??= new MySqlDebtRepository(getMySqlDebtRepositoryOptions());
 	return defaultRepository;
 }
@@ -352,4 +353,23 @@ export function getDebtRepository(): DebtRepository {
 export function getMaterialRepository(): MySqlMaterialRepository {
 	defaultRepository ??= new MySqlDebtRepository(getMySqlDebtRepositoryOptions());
 	return defaultRepository.materials;
+}
+
+/** Each built-in extension releases its ownership when its session shuts down. */
+export function retainDebtRepository(): { repository: MySqlDebtRepository; release: () => Promise<void> } {
+	const repository = getDebtRepository();
+	repositoryOwners++;
+	let released = false;
+	return {
+		repository,
+		async release() {
+			if (released) return;
+			released = true;
+			repositoryOwners--;
+			if (repositoryOwners === 0) {
+				defaultRepository = undefined;
+				await repository.close();
+			}
+		},
+	};
 }

@@ -15,10 +15,13 @@
 
 import type { ExtensionAPI } from "../../core/extensions/types.ts";
 import { registerDebtCommands } from "./commands.ts";
-import { type DebtRepository, getDebtRepository } from "./db.ts";
+import { type DebtRepository, retainDebtRepository } from "./db.ts";
 import { registerDebtTools } from "./tools.ts";
 
-export default function infoDebtExtension(pi: ExtensionAPI, repository: DebtRepository = getDebtRepository()): void {
+export default function infoDebtExtension(pi: ExtensionAPI, providedRepository?: DebtRepository): void {
+	const shared = providedRepository ? undefined : retainDebtRepository();
+	const repository = providedRepository ?? shared!.repository;
+	if (shared) pi.on("session_shutdown", () => shared.release());
 	registerDebtTools(pi, repository);
 	registerDebtCommands(pi, repository);
 }

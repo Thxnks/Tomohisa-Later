@@ -1,18 +1,26 @@
 import { createHash, randomUUID } from "node:crypto";
-import type { Pool, PoolConnection, RowDataPacket } from "mysql2/promise";
+import type { Pool, PoolConnection, ResultSetHeader, RowDataPacket } from "mysql2/promise";
 import { type DebtItem, type DebtRow, rowToItem } from "../extensions/info-debt/types.ts";
 import { MATERIAL_SCHEMA, MATERIAL_SCHEMA_VERSION } from "./schema.ts";
+import { searchExcerpt, searchOptions } from "./search.ts";
 import type {
 	AssetRole,
+	CollectionAttempt,
+	CollectionResult,
+	CollectionStatus,
 	ContentType,
 	Material,
 	MaterialAsset,
 	MaterialDetail,
+	MaterialImageText,
 	MaterialKind,
 	MaterialRepository,
+	MaterialSearchHit,
+	MaterialSearchInput,
 	MaterialSnapshot,
 	SaveMaterialInput,
 	SaveSnapshotInput,
+	SocialPlatform,
 } from "./types.ts";
 
 interface MaterialRow extends RowDataPacket {
@@ -48,6 +56,31 @@ interface AssetRow extends RowDataPacket {
 	position: number;
 	source_url: string | null;
 	created_at: number;
+}
+
+interface ImageTextMetadataRow extends RowDataPacket {
+	id: string;
+	material_id: string;
+	asset_id: string;
+	content_hash: string;
+	extractor: string;
+	created_at: number;
+}
+
+interface ImageTextRow extends ImageTextMetadataRow {
+	content: string;
+}
+
+function toImageText(row: ImageTextRow): MaterialImageText {
+	return {
+		id: row.id,
+		materialId: row.material_id,
+		assetId: row.asset_id,
+		content: row.content,
+		contentHash: row.content_hash,
+		extractor: row.extractor,
+		createdAt: row.created_at,
+	};
 }
 
 const SELECT_MATERIAL = `SELECT m.*, l.url, t.content AS text_content FROM materials m
@@ -184,6 +217,120 @@ export class MySqlMaterialRepository implements MaterialRepository {
 		return this.transaction((connection) => this.saveInTransaction(connection, input));
 	}
 
+	async search(input: MaterialSearchInput): Promise<MaterialSearchHit[]> {
+		const { terms, limit, excerptLength } = searchOptions(input);
+		await this.initialize();
+		const params: (string | number)[] = [];
+		const conditions = terms.map((term) => {
+			params.push(term, term);
+			return "(LOCATE(LOWER(?), LOWER(e.title) COLLATE utf8mb4_bin) > 0 OR LOCATE(LOWER(?), LOWER(e.content) COLLATE utf8mb4_bin) > 0)";
+		});
+		if (input.sourceType !== undefined) {
+			conditions.push("e.source_type = ?");
+			params.push(input.sourceType);
+		}
+		if (input.materialId !== undefined) {
+			conditions.push("e.material_id = ?");
+			params.push(input.materialId);
+		}
+		if (input.project !== undefined) {
+			conditions.push(
+				"EXISTS (SELECT 1 FROM material_debts md JOIN debt_items d ON d.id = md.debt_id WHERE md.material_id = e.material_id AND d.project = ?)",
+			);
+			params.push(input.project);
+		}
+		params.push(limit);
+		const [rows] = await this.pool.execute<
+			(RowDataPacket & {
+				material_id: string;
+				title: string;
+				url: string | null;
+				source_type: string;
+				kind: MaterialSearchHit["kind"];
+				evidence_id: string | null;
+				asset_id: string | null;
+				content: string;
+				extractor: string | null;
+				created_at: number;
+			})[]
+		>(
+			`SELECT e.* FROM (
+			SELECT m.id AS material_id, m.title, l.url, m.source_type,
+				IF(s.id IS NULL, 'metadata', 'snapshot') AS kind, s.id AS evidence_id, NULL AS asset_id,
+				COALESCE(s.content, '') AS content, s.extractor, COALESCE(s.created_at, m.created_at) AS created_at
+			FROM materials m LEFT JOIN material_links l ON l.material_id = m.id
+			LEFT JOIN material_snapshots s ON s.material_id = m.id ${input.includeHistory ? "" : "AND s.id = m.latest_snapshot_id"}
+			UNION ALL
+			SELECT m.id, m.title, l.url, m.source_type, 'image_text', t.id, t.asset_id, t.content, t.extractor, t.created_at
+			FROM material_image_texts t JOIN materials m ON m.id = t.material_id
+			LEFT JOIN material_links l ON l.material_id = m.id
+			${input.includeHistory ? "" : "WHERE NOT EXISTS (SELECT 1 FROM material_image_texts newer WHERE newer.asset_id = t.asset_id AND (newer.created_at > t.created_at OR (newer.created_at = t.created_at AND newer.id > t.id)))"}
+		) e WHERE ${conditions.join(" AND ")}
+		ORDER BY e.created_at DESC, e.material_id DESC, e.evidence_id DESC LIMIT ?`,
+			params,
+		);
+		return rows.map((row) => ({
+			materialId: row.material_id,
+			title: row.title,
+			url: row.url ?? undefined,
+			sourceType: row.source_type,
+			kind: row.kind,
+			snapshotId: row.kind === "snapshot" ? (row.evidence_id ?? undefined) : undefined,
+			imageTextId: row.kind === "image_text" ? (row.evidence_id ?? undefined) : undefined,
+			assetId: row.asset_id ?? undefined,
+			extractor: row.extractor ?? undefined,
+			createdAt: row.created_at,
+			...searchExcerpt(row.content, terms, excerptLength),
+		}));
+	}
+
+	async saveImageText(
+		materialId: string,
+		assetId: string,
+		content: string,
+		extractor: string,
+	): Promise<MaterialImageText> {
+		if (content.length > 1_000_000) throw new Error("Image text must not exceed 1000000 characters");
+		if (!extractor.trim() || extractor.length > 191) throw new Error("Invalid image text extractor");
+		return this.transaction(async (connection) => {
+			const [assets] = await connection.execute<AssetRow[]>(
+				"SELECT * FROM material_assets WHERE id = ? AND material_id = ? FOR UPDATE",
+				[assetId, materialId],
+			);
+			if (!assets[0]?.content_type.startsWith("image/"))
+				throw new Error("Image asset does not belong to this material");
+			const hash = createHash("sha256").update(content).digest("hex");
+			await connection.execute(
+				`INSERT INTO material_image_texts (id, material_id, asset_id, content, content_hash, extractor, created_at)
+				VALUES (?, ?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE id = id`,
+				[randomUUID(), materialId, assetId, content, hash, extractor, Date.now()],
+			);
+			const [rows] = await connection.execute<ImageTextRow[]>(
+				"SELECT * FROM material_image_texts WHERE asset_id = ? AND content_hash = ? AND extractor = ?",
+				[assetId, hash, extractor],
+			);
+			return toImageText(rows[0]);
+		});
+	}
+
+	async getImageText(materialId: string, imageTextId: string): Promise<MaterialImageText | undefined> {
+		await this.initialize();
+		const [rows] = await this.pool.execute<ImageTextRow[]>(
+			"SELECT * FROM material_image_texts WHERE material_id = ? AND id = ?",
+			[materialId, imageTextId],
+		);
+		return rows[0] ? toImageText(rows[0]) : undefined;
+	}
+
+	async findImageText(materialId: string, assetId: string, extractor: string): Promise<MaterialImageText | undefined> {
+		await this.initialize();
+		const [rows] = await this.pool.execute<ImageTextRow[]>(
+			"SELECT * FROM material_image_texts WHERE material_id = ? AND asset_id = ? AND extractor = ? ORDER BY created_at DESC, id DESC LIMIT 1",
+			[materialId, assetId, extractor],
+		);
+		return rows[0] ? toImageText(rows[0]) : undefined;
+	}
+
 	private async saveInTransaction(connection: PoolConnection, input: SaveMaterialInput): Promise<Material> {
 		const normalized = normalizeMaterial(input);
 		const now = Date.now();
@@ -257,7 +404,69 @@ export class MySqlMaterialRepository implements MaterialRepository {
 			"SELECT * FROM material_assets WHERE material_id = ? ORDER BY role, position, id",
 			[id],
 		);
-		return { material: toMaterial(rows[0]), assets: assets.map(toAsset) };
+		const [attempts] = await this.pool.execute<
+			(RowDataPacket & {
+				id: string;
+				platform: SocialPlatform;
+				status: CollectionStatus;
+				created_at: number;
+				finished_at: number | null;
+				result_json: string | null;
+			})[]
+		>("SELECT * FROM material_collections WHERE material_id = ? ORDER BY created_at DESC, id DESC LIMIT 1", [id]);
+		const attempt = attempts[0];
+		const [imageTexts] = await this.pool.execute<ImageTextMetadataRow[]>(
+			"SELECT id, material_id, asset_id, content_hash, extractor, created_at FROM material_image_texts WHERE material_id = ? ORDER BY asset_id, created_at DESC, id DESC",
+			[id],
+		);
+		return {
+			material: toMaterial(rows[0]),
+			assets: assets.map(toAsset),
+			imageTexts: imageTexts.map((row) => ({
+				id: row.id,
+				materialId: row.material_id,
+				assetId: row.asset_id,
+				contentHash: row.content_hash,
+				extractor: row.extractor,
+				createdAt: row.created_at,
+			})),
+			collection: attempt
+				? {
+						id: attempt.id,
+						materialId: id,
+						platform: attempt.platform,
+						status: attempt.status,
+						createdAt: attempt.created_at,
+						finishedAt: attempt.finished_at ?? undefined,
+						result: attempt.result_json ? (JSON.parse(attempt.result_json) as CollectionResult) : undefined,
+					}
+				: undefined,
+		};
+	}
+
+	async beginCollection(materialId: string, platform: SocialPlatform): Promise<CollectionAttempt> {
+		await this.initialize();
+		const attempt: CollectionAttempt = {
+			id: randomUUID(),
+			materialId,
+			platform,
+			status: "running",
+			createdAt: Date.now(),
+		};
+		await this.pool.execute(
+			"INSERT INTO material_collections (id, material_id, platform, status, created_at) VALUES (?, ?, ?, 'running', ?)",
+			[attempt.id, materialId, platform, attempt.createdAt],
+		);
+		return attempt;
+	}
+
+	async finishCollection(id: string, result: CollectionResult): Promise<void> {
+		await this.initialize();
+		const [updated] = await this.pool.execute<ResultSetHeader>(
+			"UPDATE material_collections SET status = ?, result_json = ?, finished_at = ? WHERE id = ? AND status = 'running'",
+			[result.status, JSON.stringify(result), Date.now(), id],
+		);
+		if (updated.affectedRows !== 1) throw new Error("Collection attempt is missing or already finished");
 	}
 
 	async list(limit: number, beforeId?: string): Promise<Material[]> {

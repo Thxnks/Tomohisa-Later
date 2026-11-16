@@ -26,6 +26,7 @@ export interface SaveMaterialFileInput {
 	sourceUrl?: string;
 	role?: AssetRole;
 	position?: number;
+	reuseExisting?: boolean;
 }
 
 export class MaterialService {
@@ -84,6 +85,12 @@ export class MaterialService {
 			await file.close();
 		}
 		const blob = await this.assets.put(data);
+		if (existing && input.reuseExisting) {
+			const saved = existing.assets.find(
+				(asset) => asset.role === role && asset.sha256 === blob.sha256 && asset.contentType === input.contentType,
+			);
+			if (saved) return { material: existing.material, asset: saved };
+		}
 		const asset: MaterialAsset = {
 			id: randomUUID(),
 			materialId: existing?.material.id ?? randomUUID(),

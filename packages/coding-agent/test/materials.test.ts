@@ -22,6 +22,12 @@ async function directory(): Promise<string> {
 
 function repositoryStub(): MaterialRepository {
 	return {
+		search: vi.fn(),
+		saveImageText: vi.fn(),
+		getImageText: vi.fn(),
+		findImageText: vi.fn(),
+		beginCollection: vi.fn(),
+		finishCollection: vi.fn(),
 		save: vi.fn(),
 		get: vi.fn(),
 		list: vi.fn(),
@@ -99,6 +105,43 @@ describe("local asset store", () => {
 });
 
 describe("material files", () => {
+	it("reuses an imported image when a later capture reports another position", async () => {
+		const root = await directory();
+		const filePath = join(root, "image.png");
+		const bytes = Buffer.from("same image bytes");
+		await writeFile(filePath, bytes);
+		const repository = repositoryStub();
+		const material: Material = {
+			id: "source",
+			kind: "link",
+			title: "Source",
+			sourceType: "web",
+			createdAt: 1,
+			updatedAt: 1,
+		};
+		const asset: MaterialAsset = {
+			id: "existing-image",
+			materialId: material.id,
+			role: "image",
+			position: 0,
+			sha256: createHash("sha256").update(bytes).digest("hex"),
+			size: bytes.length,
+			contentType: "image/png",
+			fileName: "image.png",
+			createdAt: 1,
+		};
+		vi.mocked(repository.get).mockResolvedValue({ material, assets: [asset] });
+		const result = await new MaterialService(repository, new LocalAssetStore(join(root, "assets"))).saveFile({
+			filePath,
+			materialId: material.id,
+			contentType: "image/png",
+			role: "image",
+			position: 4,
+			reuseExisting: true,
+		});
+		expect(result.asset.id).toBe("existing-image");
+		expect(repository.attachAsset).not.toHaveBeenCalled();
+	});
 	it("copies a local file without changing its source and preserves image order", async () => {
 		const root = await directory();
 		const filePath = join(root, "third.png");
@@ -162,6 +205,34 @@ describe("material files", () => {
 });
 
 describe("material database transactions", () => {
+	it("adds collection storage when upgrading schema version 1", async () => {
+		const { database, connection } = databaseStub();
+		connection.execute
+			.mockResolvedValueOnce([[{ acquired: 1 }], []])
+			.mockResolvedValueOnce([[], []])
+			.mockResolvedValueOnce([[{ value: "1" }], []]);
+		await migrateMaterials(database);
+		const sql = connection.execute.mock.calls.map(([statement]) => String(statement));
+		expect(sql.some((statement) => statement.startsWith("CREATE TABLE IF NOT EXISTS material_collections"))).toBe(
+			true,
+		);
+		expect(connection.execute).toHaveBeenCalledWith(expect.stringContaining("INSERT INTO material_meta"), ["3", "3"]);
+		expect(connection.release).toHaveBeenCalledOnce();
+	});
+
+	it("does not overwrite an already finished collection", async () => {
+		const { database, pool } = databaseStub();
+		pool.execute.mockResolvedValueOnce([{ affectedRows: 0 }, []]);
+		await expect(
+			new MySqlMaterialRepository(database, async () => {}).finishCollection("finished", {
+				status: "partial",
+				sources: [],
+				imageCount: 0,
+				images: [],
+				issues: ["NEED_LOGIN"],
+			}),
+		).rejects.toThrow("already finished");
+	});
 	it("rolls back a snapshot when its material is missing", async () => {
 		const { database, connection } = databaseStub();
 		const repository = new MySqlMaterialRepository(database, async () => {});
