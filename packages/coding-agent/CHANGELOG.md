@@ -5,6 +5,7 @@
 ### Added
 
 - Added a loopback-only Information Debt HTTP capture API and a Chromium/Edge extension for saving the current page URL, title, and why-saved note.
+- Added local material storage with typed link, text, and file records, immutable source snapshots, ordered attachments, and atomic links to new Information Debt captures. Added material tools and an explicit importer for existing debt sources.
 
 ## [0.84.3] - 2026-08-24
 

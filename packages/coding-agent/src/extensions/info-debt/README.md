@@ -46,8 +46,9 @@ These optional variables override the built-in defaults:
 | `PI_INFO_DEBT_MYSQL_USER` | `root` |
 | `PI_INFO_DEBT_MYSQL_DATABASE` | `tomohisa_helper` |
 
-The extension creates and migrates its `debt_meta` and `debt_items` tables on
-first use.
+The extension creates its debt tables and the material storage tables on first use.
+New captures with a web URL or raw text also save a material in the same transaction.
+See [Material storage](../../materials/README.md) for schema, files, and tools.
 
 ## Local HTTP API and browser capture
 
@@ -121,9 +122,11 @@ persistence or the Agent Loop.
 
 ## Schema
 
-One table, `debt_items` (snake_case columns mapped to camelCase fields in
-`types.ts`). `DebtRepository` owns all MySQL access. Schema version state is
-tracked in `debt_meta`.
+`debt_items` holds action state (snake_case columns mapped to camelCase fields in
+`types.ts`). `DebtRepository` owns debt access. `debt_meta` tracks its schema.
+Material storage uses separate tables and schema versioning. Debt status changes
+do not change saved materials. Existing rows can be imported with
+`import_debt_material` using their full debt ID.
 
 ## Manual lifecycle test
 

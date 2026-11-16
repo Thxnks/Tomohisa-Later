@@ -1,6 +1,7 @@
 /** MySQL repository for Information Debt. */
 
 import { createPool, type Pool, type ResultSetHeader, type RowDataPacket } from "mysql2/promise";
+import { MySqlMaterialRepository, migrateMaterials } from "../../materials/repository.ts";
 import { type DebtItem, type DebtRow, type DebtStatus, type DebtType, rowToItem } from "./types.ts";
 
 type SqlParam = null | number | string | Uint8Array;
@@ -124,6 +125,7 @@ export function getMySqlDebtRepositoryOptions(): MySqlDebtRepositoryOptions {
 export class MySqlDebtRepository implements DebtRepository {
 	private readonly pool: Pool;
 	private ready: Promise<void> | undefined;
+	readonly materials: MySqlMaterialRepository;
 
 	constructor(options: MySqlDebtRepositoryOptions) {
 		this.pool = createPool({
@@ -136,6 +138,7 @@ export class MySqlDebtRepository implements DebtRepository {
 			idleTimeout: 60_000,
 			queueLimit: 0,
 		});
+		this.materials = new MySqlMaterialRepository(this.pool, () => this.ensureReady());
 	}
 
 	async close(): Promise<void> {
@@ -144,10 +147,21 @@ export class MySqlDebtRepository implements DebtRepository {
 
 	async create(item: DebtItem): Promise<void> {
 		await this.ensureReady();
-		await this.pool.execute(
-			`INSERT INTO debt_items (${COLUMNS.join(", ")}) VALUES (${COLUMNS.map(() => "?").join(", ")})`,
-			itemToParams(item),
-		);
+		const connection = await this.pool.getConnection();
+		try {
+			await connection.beginTransaction();
+			await connection.execute(
+				`INSERT INTO debt_items (${COLUMNS.join(", ")}) VALUES (${COLUMNS.map(() => "?").join(", ")})`,
+				itemToParams(item),
+			);
+			await this.materials.captureDebt(connection, item);
+			await connection.commit();
+		} catch (error) {
+			await connection.rollback();
+			throw error;
+		} finally {
+			connection.release();
+		}
 	}
 
 	async get(id: string): Promise<DebtItem | undefined> {
@@ -287,6 +301,7 @@ export class MySqlDebtRepository implements DebtRepository {
 			"INSERT INTO debt_meta (`key`, `value`) VALUES ('schema_version', '1') " +
 				"ON DUPLICATE KEY UPDATE `value` = VALUES(`value`)",
 		);
+		await migrateMaterials(this.pool);
 	}
 
 	private ensureReady(): Promise<void> {
@@ -327,9 +342,14 @@ export class MySqlDebtRepository implements DebtRepository {
 	}
 }
 
-let defaultRepository: DebtRepository | undefined;
+let defaultRepository: MySqlDebtRepository | undefined;
 
 export function getDebtRepository(): DebtRepository {
 	defaultRepository ??= new MySqlDebtRepository(getMySqlDebtRepositoryOptions());
 	return defaultRepository;
+}
+
+export function getMaterialRepository(): MySqlMaterialRepository {
+	defaultRepository ??= new MySqlDebtRepository(getMySqlDebtRepositoryOptions());
+	return defaultRepository.materials;
 }

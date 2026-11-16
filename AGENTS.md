@@ -2,6 +2,8 @@
 
 ## Conversational Style
 
+- Apply the `asd-ste100` skill in every session for this project. Read `/Users/tomohisa/.codex/skills/asd-ste100/SKILL.md` before the first substantive response.
+- Reply in Chinese unless the user requests another language. For Chinese replies, apply the skill's clarity principles: use short sentences, state one idea per sentence, use consistent terms, and define necessary technical terms on first use. Do not claim formal ASD-STE100 compliance for Chinese text.
 - Keep answers short and concise
 - No emojis in commits, issues, PR comments, or code
 - No fluff or cheerful filler text (e.g., "Thanks @user" not "Thanks so much @user!")
