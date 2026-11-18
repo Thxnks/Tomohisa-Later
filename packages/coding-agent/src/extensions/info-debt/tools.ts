@@ -149,9 +149,11 @@ export function registerDebtTools(pi: ExtensionAPI, repository: DebtRepository =
 		name: "list_debts",
 		label: "List Debts",
 		description:
-			"List information debt items, newest-first by priority. Filter by status, type, or project. " +
-			"Returns a compact one-line-per-item list with short ids.",
-		promptSnippet: "list_debts: list saved information debt items, filterable by status/type/project",
+			"List business tasks and next actions by priority, deadline, then oldest creation time. Filter by status, type, or project. Returns short ids. This does not list the source library or bulk-imported favorites.",
+		promptSnippet: "list_debts: business tasks and next actions, filterable by status/type/project",
+		promptGuidelines: [
+			"Use list_debts for tasks, priorities, and next actions. For recent saved sources, use list_materials; for the last favorites import, use get_saved_import. Debt results are not the user's complete or most recent collection.",
+		],
 		parameters: Type.Object({
 			status: Type.Optional(StringEnum(DEBT_STATUSES, { description: "Filter by status" })),
 			debtType: Type.Optional(StringEnum(DEBT_TYPES, { description: "Filter by debt type" })),
@@ -205,8 +207,7 @@ export function registerDebtTools(pi: ExtensionAPI, repository: DebtRepository =
 		name: "search_debts",
 		label: "Search Debts",
 		description:
-			"Full-text search across debt titles, summaries, why-saved notes, projects, next actions, and URLs. " +
-			"Case-insensitive substring match.",
+			"Search business metadata (titles, summaries, why-saved notes, projects, next actions, URLs) by case-insensitive substring. Does not search original bodies or independent imported favorites. Use search_materials for saved source content.",
 		promptSnippet: "search_debts: substring search over saved debt items",
 		parameters: Type.Object({
 			query: Type.String({ description: "Search text" }),

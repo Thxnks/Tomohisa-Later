@@ -216,7 +216,7 @@ describe("material database transactions", () => {
 		expect(sql.some((statement) => statement.startsWith("CREATE TABLE IF NOT EXISTS material_collections"))).toBe(
 			true,
 		);
-		expect(connection.execute).toHaveBeenCalledWith(expect.stringContaining("INSERT INTO material_meta"), ["3", "3"]);
+		expect(connection.execute).toHaveBeenCalledWith(expect.stringContaining("INSERT INTO material_meta"), ["4", "4"]);
 		expect(connection.release).toHaveBeenCalledOnce();
 	});
 

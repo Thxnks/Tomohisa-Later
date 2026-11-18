@@ -2,6 +2,7 @@
 
 import { createPool, type Pool, type ResultSetHeader, type RowDataPacket } from "mysql2/promise";
 import { MySqlMaterialRepository, migrateMaterials } from "../../materials/repository.ts";
+import { MySqlSavedImportRepository } from "../../materials/saved-repository.ts";
 import { type DebtItem, type DebtRow, type DebtStatus, type DebtType, rowToItem } from "./types.ts";
 
 type SqlParam = null | number | string | Uint8Array;
@@ -126,6 +127,7 @@ export class MySqlDebtRepository implements DebtRepository {
 	private readonly pool: Pool;
 	private ready: Promise<void> | undefined;
 	readonly materials: MySqlMaterialRepository;
+	readonly savedImports: MySqlSavedImportRepository;
 
 	constructor(options: MySqlDebtRepositoryOptions) {
 		this.pool = createPool({
@@ -139,6 +141,7 @@ export class MySqlDebtRepository implements DebtRepository {
 			queueLimit: 0,
 		});
 		this.materials = new MySqlMaterialRepository(this.pool, () => this.ensureReady());
+		this.savedImports = new MySqlSavedImportRepository(this.pool, () => this.ensureReady(), this.materials);
 	}
 
 	async close(): Promise<void> {

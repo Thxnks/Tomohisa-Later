@@ -138,6 +138,27 @@ describe("social source boundaries", () => {
 });
 
 describe("collection state and evidence", () => {
+	it("uses a refreshed signed link only for the same post without changing its original material", async () => {
+		const { repo, material } = repository();
+		const refreshed = `${X_URL}?signed=refreshed`;
+		const command = vi
+			.fn<CollectionCommand>()
+			.mockResolvedValue(response([{ url: refreshed, text: "Exact source" }]));
+		const collector = new MaterialCollector(
+			repo,
+			new MaterialService(repo, new LocalAssetStore(await folder())),
+			new AgentReachClient(command),
+		);
+		const result = await collector.collect(material.id, undefined, refreshed);
+		expect(command.mock.calls[0][1]).toEqual(["twitter", "thread", refreshed]);
+		expect(result.sources[0].url).toBe(refreshed);
+		expect(material.url).toBe(X_URL);
+		await expect(
+			collector.collect(material.id, undefined, "https://x.com/bob/status/456?signed=other"),
+		).rejects.toThrow("same social post");
+		expect(command).toHaveBeenCalledOnce();
+		expect(repo.beginCollection).toHaveBeenCalledOnce();
+	});
 	it.each([
 		["NEED_LOGIN", "needs_login"],
 		["PLATFORM_BLOCKED", "blocked"],

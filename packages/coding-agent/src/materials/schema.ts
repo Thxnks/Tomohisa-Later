@@ -1,5 +1,5 @@
 /** Independent schema versioning: the existing debt tables remain intact. */
-export const MATERIAL_SCHEMA_VERSION = 3;
+export const MATERIAL_SCHEMA_VERSION = 4;
 export const MATERIAL_SCHEMA = [
 	`CREATE TABLE IF NOT EXISTS material_meta (
 		\`key\` VARCHAR(191) PRIMARY KEY, \`value\` VARCHAR(191) NOT NULL
@@ -58,5 +58,25 @@ export const MATERIAL_SCHEMA = [
 		INDEX idx_image_text_material (material_id, asset_id, created_at, id),
 		FOREIGN KEY (material_id) REFERENCES materials(id),
 		FOREIGN KEY (asset_id) REFERENCES material_assets(id)
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+	`CREATE TABLE IF NOT EXISTS material_saved_imports (
+		id VARCHAR(36) PRIMARY KEY, status VARCHAR(16) NOT NULL,
+		requested_limit INT UNSIGNED NOT NULL, pause_reason VARCHAR(64),
+		created_at BIGINT NOT NULL, updated_at BIGINT NOT NULL,
+		INDEX idx_saved_import_created (created_at, id)
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+	`CREATE TABLE IF NOT EXISTS material_social_sources (
+		platform VARCHAR(32) NOT NULL, post_id VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+		material_id VARCHAR(36) NOT NULL, PRIMARY KEY (platform, post_id),
+		FOREIGN KEY (material_id) REFERENCES materials(id)
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+	`CREATE TABLE IF NOT EXISTS material_saved_import_items (
+		import_id VARCHAR(36) NOT NULL, note_id VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+		position INT UNSIGNED NOT NULL, url TEXT NOT NULL, title VARCHAR(512) NOT NULL,
+		author VARCHAR(256), status VARCHAR(16) NOT NULL DEFAULT 'pending',
+		material_id VARCHAR(36), attempt_id VARCHAR(36), issues_json LONGTEXT NOT NULL,
+		PRIMARY KEY (import_id, note_id), UNIQUE KEY uq_import_position (import_id, position),
+		FOREIGN KEY (import_id) REFERENCES material_saved_imports(id),
+		FOREIGN KEY (material_id) REFERENCES materials(id)
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
 ];

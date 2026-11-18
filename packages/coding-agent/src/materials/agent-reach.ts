@@ -1,9 +1,7 @@
-import { existsSync } from "node:fs";
 import { open, readdir, realpath } from "node:fs/promises";
-import { homedir } from "node:os";
 import { join, relative, resolve } from "node:path";
-import { parse as parseYaml } from "yaml";
 import { type CollectionCommand, CollectionError, runCollectionCommand } from "./collection-command.ts";
+import { boundOpenCLI, errorCode, opencliRows, parseJson } from "./opencli.ts";
 import { record, socialTarget } from "./social-source.ts";
 
 export interface SocialItem {
@@ -24,34 +22,6 @@ export interface DownloadedImage {
 export interface SocialMediaResult {
 	images: DownloadedImage[];
 	issues: string[];
-}
-
-function errorCode(value: unknown): string {
-	const code = record(value)?.code;
-	if (
-		[
-			"NEED_SETUP",
-			"NEED_LOGIN",
-			"RATE_LIMITED",
-			"PLATFORM_BLOCKED",
-			"NOT_FOUND",
-			"BAD_INPUT",
-			"BUSY",
-			"TIMEOUT",
-		].includes(String(code))
-	)
-		return String(code);
-	if (code === "AUTH_REQUIRED" || code === "LOGIN_REQUIRED") return "NEED_LOGIN";
-	if (code === "SECURITY_BLOCK" || code === "CAPTCHA_REQUIRED") return "PLATFORM_BLOCKED";
-	return "UPSTREAM_BROKEN";
-}
-
-function parseJson(output: string): unknown {
-	try {
-		return JSON.parse(output);
-	} catch {
-		throw new CollectionError("INVALID_RESPONSE");
-	}
 }
 
 export class AgentReachClient {
@@ -123,54 +93,15 @@ export class AgentReachClient {
 	async downloadImages(url: string, output: string, signal?: AbortSignal): Promise<SocialMediaResult> {
 		const target = socialTarget(url);
 		if (target.platform !== "xiaohongshu") throw new CollectionError("BAD_INPUT");
-		// Ask Reach for the exact bound profile. Never let OpenCLI choose another browser.
-		const status = await this.command(process.env.PI_AGENT_REACH_BIN ?? "agent-reach", ["browser", "status"], signal);
-		const statusData = record(parseJson(status.stdout));
-		if (statusData?.ok === false) throw new CollectionError(errorCode(statusData.error));
-		const browser = record(statusData?.result);
-		if (
-			status.code !== 0 ||
-			statusData?.schema_version !== 1 ||
-			statusData.ok !== true ||
-			browser?.running !== true ||
-			browser.opencli_connected !== true ||
-			typeof browser.opencli_context !== "string" ||
-			!browser.opencli_context
-		) {
-			throw new CollectionError("NEED_SETUP");
-		}
-		const privateBinary = join(homedir(), ".agent-reach", "tools", "npm-global", "bin", "opencli");
-		const binary = process.env.PI_OPENCLI_BIN ?? (existsSync(privateBinary) ? privateBinary : "opencli");
+		const { binary, env } = await boundOpenCLI(this.command, signal);
 		const result = await this.command(
 			binary,
 			["xiaohongshu", "download", url, "--output", output, "-f", "json"],
 			signal,
-			{
-				OPENCLI_PROFILE: browser.opencli_context,
-				OPENCLI_WINDOW: "background",
-				OPENCLI_CDP_ENDPOINT: "",
-				OPENCLI_CDP_TARGET: "",
-			},
+			env,
 		);
-		let parsed: unknown;
-		try {
-			parsed = parseJson(result.stdout);
-		} catch {
-			// OpenCLI can emit a YAML error envelope even with JSON output selected.
-			const start = result.stdout.search(/^ok: false\s*$/m);
-			if (start === -1) throw new CollectionError("INVALID_RESPONSE");
-			try {
-				parsed = parseYaml(result.stdout.slice(start), { maxAliasCount: 0 });
-			} catch {
-				throw new CollectionError("INVALID_RESPONSE");
-			}
-			if (record(parsed)?.ok !== false) throw new CollectionError("INVALID_RESPONSE");
-		}
-		const envelope = record(parsed);
-		if (envelope?.ok === false) throw new CollectionError(errorCode(envelope.error));
-		const rows = Array.isArray(parsed) ? parsed : envelope?.ok === true ? envelope.data : undefined;
-		if (result.code !== 0 || !Array.isArray(rows) || rows.length === 0 || rows.length > 100)
-			throw new CollectionError("INVALID_RESPONSE");
+		const rows = opencliRows(result);
+		if (!rows.length) throw new CollectionError("INVALID_RESPONSE");
 		const files = new Map<number, string>();
 		const root = await realpath(output);
 		for (const directory of await readdir(output, { withFileTypes: true })) {

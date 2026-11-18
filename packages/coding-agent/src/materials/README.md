@@ -25,6 +25,9 @@ Design references:
 | `material_meta` | Independent material schema version |
 | `material_collections` | Collection attempts, status, source references, image manifests, and missing-content flags |
 | `material_image_texts` | Immutable machine transcriptions linked to the original image asset and extractor version |
+| `material_saved_imports` | Durable Xiaohongshu favorites import jobs, requested limits, status and pause reasons |
+| `material_saved_import_items` | Captured favorite memberships, signed URLs, order, per-item progress and material references |
+| `material_social_sources` | Canonical platform post IDs for saved-import deduplication |
 
 The first database operation creates the tables. Migrations hold a MySQL advisory
 lock on one connection. The version advances only after all statements succeed.
@@ -45,7 +48,8 @@ changed source fields. The old source relations remain available.
 
 Link identity uses the URL parsed by `URL`. It preserves query parameters and
 fragments, including signed social-media links. Different signed URLs can create
-separate materials. Platform-specific identity rules are not implemented yet.
+separate materials through generic save tools. Saved imports additionally deduplicate
+Xiaohongshu notes by platform post ID, and can reuse existing direct-link materials.
 
 Text identity uses its exact UTF-8 content. File identity uses its hash and MIME type.
 Duplicate imports retain the first material title and source type.
@@ -94,6 +98,9 @@ directory, with writes paused for a consistent backup.
 | `collect_material` | Collect one saved X or Xiaohongshu link, or save and collect a supplied URL |
 | `search_materials` | Search titles, body snapshots, and image transcriptions with bounded evidence excerpts |
 | `extract_material_image_text` | Transcribe one saved image locally with macOS Vision; reuse existing output |
+| `start_saved_import` | Capture a bounded Xiaohongshu favorites manifest without fetching each note's body |
+| `run_saved_import` | Collect a small batch from an existing manifest and checkpoint each item |
+| `get_saved_import` | Read import progress, including the latest job after a session restart |
 
 Example in Pi:
 
@@ -110,6 +117,70 @@ Example in Pi:
 `save_material` does not fetch pages. Use `collect_material` for supported social
 sources. Image transcription is a separate tool. This version does not call models or execute Dreaming.
 Processors use `MaterialRepository` and `MaterialService` without an interactive session.
+
+## Xiaohongshu favorites imports
+
+Ask Pi to import the first 20 saved Xiaohongshu notes. The agent selects these
+tools as needed; the importer does not invoke a model or define an agent workflow.
+
+1. `start_saved_import` with `{ "limit": 20 }` reads the current account's saved
+   list through OpenCLI's read-only `xiaohongshu saved` command. It stores the
+   returned titles, authors, full signed URLs and platform order in MySQL.
+2. `run_saved_import` with the returned `importId` collects up to three pending
+   notes by default. `batchSize` accepts 1 through 5. Repeat while status is `ready`.
+3. `get_saved_import` reads progress without accessing the platform. Omit its ID
+   to retrieve the latest job in a new session. Resume that job rather than
+   starting another manifest.
+
+The list limit accepts 1 through 100. This is a bounded import, not an export of
+the entire favorites library. The upstream adapter scrolls a limited number of
+times and exposes no durable pagination cursor. Returning fewer than the requested
+limit does not prove that the library ends there. Reports distinguish requested
+and enumerated counts, and always mark library coverage as unknown. The order is
+the platform's returned order, not a verified save timestamp. Named folders, X
+bookmarks, recurring sync and unbounded pagination are not implemented.
+
+Listing can reopen the already configured Reach browser. It does not install
+missing tools, select a different profile or open a login flow. Login remains in
+the dedicated browser. Initial setup must include an OpenCLI version that provides
+the `xiaohongshu saved` command.
+
+Each note's material ID is checkpointed before collection, and its outcome is
+persisted after collection. A MySQL advisory lock serializes import batches across
+processes. A completed item is not retried within that job. A process crash releases
+the lock; the next explicit batch continues pending items. A crash between source
+storage and checkpoint completion can repeat one collection, with snapshots and
+image blobs reused. This provides resumable progress, not exactly-once network reads.
+
+Imports reuse materials by platform note ID when signed URL parameters differ.
+Existing direct links are recognized on first import. Short links without a known
+note ID cannot be matched this way. Fresh manifest links can fetch the same post
+without rewriting its original material URL; attempts record the actual source URL.
+Signed links stored in an old manifest may expire. In that case, create a fresh
+manifest to obtain current links; already collected notes will be skipped.
+
+An existing collection is skipped when it saved evidence and its only remaining
+gaps are unprocessed images or unsupported video imports. Other partial sources
+can be collected again by an explicitly started new import. Importing does not
+automatically create Information Debt or transcribe every image. Use
+`extract_material_image_text` separately for images relevant to a question.
+
+Item statuses distinguish `pending`, `imported`, `partial`, `skipped` and `failed`.
+`imported` means the supported source content was stored; OCR can still be pending
+and videos can be excluded. Those gaps remain in the item's issues and collection
+record. `completed` means all manifest items reached an outcome, which can include
+failed or partial items. It does not mean every source or the entire library is complete.
+
+There is a five-second pause before each note collection. Login expiry,
+verification, rate limits, browser contention, timeouts and infrastructure errors
+pause the job immediately, retaining evidence and leaving the current item pending.
+The agent must stop on a paused job. After the user resolves the blocker or explicitly
+requests a retry, use `run_saved_import` with `resume: true`. There are no automatic
+retries or fallback accounts/backends. Unavailable notes can reach `failed` without
+preventing later items from being imported.
+
+Tool results contain counts and at most 20 item summaries, without bodies or signed
+URLs. Schema version 4 adds the import tables without rewriting existing sources.
 
 ## Keyword retrieval and image text
 

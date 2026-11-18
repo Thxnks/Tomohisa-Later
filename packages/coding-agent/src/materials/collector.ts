@@ -27,21 +27,38 @@ export class MaterialCollector {
 		this.client = client;
 	}
 
-	async collect(materialId: string, signal?: AbortSignal): Promise<CollectionResult & { attemptId: string }> {
+	async collect(
+		materialId: string,
+		signal?: AbortSignal,
+		sourceUrl?: string,
+	): Promise<CollectionResult & { attemptId: string }> {
 		if (this.active.has(materialId)) throw new Error("This material already has a collection in progress");
 		this.active.add(materialId);
 		try {
-			return await this.run(materialId, signal);
+			return await this.run(materialId, signal, sourceUrl);
 		} finally {
 			this.active.delete(materialId);
 		}
 	}
 
-	private async run(materialId: string, signal?: AbortSignal): Promise<CollectionResult & { attemptId: string }> {
+	private async run(
+		materialId: string,
+		signal?: AbortSignal,
+		sourceUrl?: string,
+	): Promise<CollectionResult & { attemptId: string }> {
 		const detail = await this.repository.get(materialId);
 		if (!detail || detail.material.kind !== "link" || !detail.material.url)
 			throw new Error("Collection requires an existing link material");
-		const target = socialTarget(detail.material.url);
+		const original = socialTarget(detail.material.url);
+		const target = sourceUrl ? socialTarget(sourceUrl) : original;
+		if (
+			sourceUrl &&
+			(!original.postId ||
+				!target.postId ||
+				original.platform !== target.platform ||
+				original.postId.toLowerCase() !== target.postId.toLowerCase())
+		)
+			throw new Error("Refreshed link must identify the same social post");
 		const attempt = await this.repository.beginCollection(materialId, target.platform);
 		const result: CollectionResult = { status: "failed", sources: [], imageCount: 0, images: [], issues: [] };
 		try {

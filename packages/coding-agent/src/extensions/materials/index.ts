@@ -9,6 +9,7 @@ import { MATERIAL_FILE_TYPES, MaterialService } from "../../materials/service.ts
 import { socialTarget } from "../../materials/social-source.ts";
 import type { MaterialRepository } from "../../materials/types.ts";
 import { retainDebtRepository } from "../info-debt/db.ts";
+import { registerSavedImportTools } from "./saved-tools.ts";
 
 export default function materialsExtension(pi: ExtensionAPI, providedRepository?: MaterialRepository): void {
 	const shared = providedRepository ? undefined : retainDebtRepository();
@@ -20,6 +21,7 @@ export default function materialsExtension(pi: ExtensionAPI, providedRepository?
 	const service = new MaterialService(repository, assetStore);
 	const collector = new MaterialCollector(repository, service);
 	const imageTextService = new MaterialImageTextService(repository, assetStore);
+	if (shared) registerSavedImportTools(pi, shared.repository.savedImports, repository, collector);
 
 	pi.registerTool({
 		name: "search_materials",
@@ -106,7 +108,12 @@ export default function materialsExtension(pi: ExtensionAPI, providedRepository?
 		name: "list_materials",
 		label: "List Materials",
 		description:
-			"List source metadata without body text. Use debtId to find sources captured with a debt. Use beforeId to request the next page.",
+			"List recently saved source metadata, newest first, including imported favorites without Information Debt. This is the saved-source library. Use debtId to find sources captured with a debt, or beforeId for the next page. Does not return body text or a library-wide total.",
+		promptSnippet: "list_materials: recently saved sources, including bulk-imported favorites, newest first",
+		promptGuidelines: [
+			"For questions about recent saved sources, such as 上次收藏了啥 or 最近保存了什么, use list_materials. Imported favorites do not need Information Debt records and are absent from list_debts.",
+			"Use get_saved_import for the last favorites import or its progress. Use search_materials for a topic within source content. Use list_debts only for business tasks, priorities, or next actions.",
+		],
 		parameters: Type.Object({
 			debtId: Type.Optional(Type.String()),
 			beforeId: Type.Optional(Type.String()),
